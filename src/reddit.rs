@@ -23,7 +23,7 @@ impl<'a> Reddit<'a> {
     }
 
     pub fn listentothis_hot(&self) -> Result<impl Iterator<Item = Track>, failure::Error> {
-        let re = regex::Regex::new("(.*) - (.*?) +[\\(\\[]")?;
+        let re = regex::Regex::new(r"(.*?)\s+\W+\s+(.*?)\s+[\(\[]")?;
 
         #[derive(Deserialize, Debug)]
         struct Response {
@@ -67,12 +67,19 @@ impl<'a> Reddit<'a> {
                     Some(child.title)
                 }
             })
-            .filter_map(move |title| {
-                re.captures(&title)
-                    .map(|captures| Track::new(captures[1].into(), captures[2].into()))
+            .filter_map(move |title| match re.captures(&title) {
+                Some(cap) => Some(Track::new(decoded(&cap[1]), decoded(&cap[2]))),
+                None => {
+                    println!("Failed to match: {}", title);
+                    None
+                }
             });
         Ok(tracks)
     }
+}
+
+fn decoded(input: &str) -> String {
+    htmlescape::decode_html(&input).unwrap_or_else(|_| input.into())
 }
 
 fn get_access_token(client: &reqwest::Client) -> Result<String, failure::Error> {

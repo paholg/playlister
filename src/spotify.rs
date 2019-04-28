@@ -1,16 +1,27 @@
 use crate::{track::Track, AuthResponse};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::env;
+
+struct Record {
+    uri: String,
+    name: String,
+}
+
+impl Record {
+    fn new(uri: String, name: String) -> Record {
+        Record { uri, name }
+    }
+}
 
 struct SpotifyTrack {
     track: Track,
-    uri: Option<String>,
+    record: Option<Record>,
 }
 
 impl SpotifyTrack {
-    fn new(track: Track, uri: Option<String>) -> SpotifyTrack {
-        SpotifyTrack { track, uri }
+    fn new(track: Track, record: Option<Record>) -> SpotifyTrack {
+        SpotifyTrack { track, record }
     }
 }
 
@@ -36,22 +47,27 @@ impl<'a> Spotify<'a> {
         &self,
         tracks: I,
     ) -> Result<(), failure::Error> {
+        let mut n_failed = 0;
         let uris: Vec<String> = tracks
             .into_iter()
-            .filter_map(|track| match self.search(&track) {
-                Ok(uri) => Some(SpotifyTrack::new(track, uri)),
+            .filter_map(|track| match self.search(track.clone()) {
+                Ok(spotify_track) => Some(spotify_track),
                 Err(e) => {
                     println!("Error in search result for {}: {}", track, e);
                     None
                 }
             })
-            .filter_map(|spotify_track| {
-                if spotify_track.uri.is_none() {
-                    println!("Failed to find track for {}", spotify_track.track);
+            .filter_map(|spotify_track| match spotify_track.record {
+                Some(record) => Some(record.uri),
+                None => {
+                    println!("Failed to find track for: {}", spotify_track.track);
+                    n_failed += 1;
+                    None
                 }
-                spotify_track.uri
             })
             .collect();
+
+        println!("Found {} of {} tracks", uris.len(), uris.len() + n_failed);
 
         let body = json!({ "uris": uris });
 
@@ -69,7 +85,7 @@ impl<'a> Spotify<'a> {
         Ok(())
     }
 
-    fn search(&self, track: &Track) -> Result<Option<String>, failure::Error> {
+    fn search(&self, track: Track) -> Result<SpotifyTrack, failure::Error> {
         #[derive(Deserialize, Debug)]
         struct Response {
             tracks: Items,
@@ -83,6 +99,7 @@ impl<'a> Spotify<'a> {
         #[derive(Deserialize, Debug)]
         struct Item {
             uri: String,
+            name: String,
         }
 
         let response: Response = self
@@ -97,8 +114,13 @@ impl<'a> Spotify<'a> {
             .send()?
             .json()?;
 
-        let uri = response.tracks.items.get(0).map(|item| item.uri.clone());
-        Ok(uri)
+        let record = response
+            .tracks
+            .items
+            .get(0)
+            .map(|item| Record::new(item.uri.clone(), item.name.clone()));
+
+        Ok(SpotifyTrack::new(track, record))
     }
 }
 

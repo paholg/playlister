@@ -3,12 +3,15 @@ authors = ["Paho Lurie-Gregg <paho.luriegregg@outreach.io>"]
 edition = "2018"
 name = "listentothis-playlist"
 version = "0.1.0"
-
 [dependencies]
 dotenv = "*"
 dotenv_codegen = "*"
 failure = "*"
+htmlescape = "*"
 regex = "*"
 reqwest = "*"
-serde = { version = "*", features = ["derive"] }
 serde_json = "*"
+
+[dependencies.serde]
+features = ["derive"]
+version = "*"
