@@ -3,6 +3,7 @@ authors = ["Paho Lurie-Gregg <paho.luriegregg@outreach.io>"]
 edition = "2018"
 name = "listentothis-playlist"
 version = "0.1.0"
+license = "MIT or Apache-2.0"
 autobins = false
 
 [dependencies]
