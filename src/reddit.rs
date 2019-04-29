@@ -1,4 +1,5 @@
 use crate::{track::Track, AuthResponse};
+use log::warn;
 use serde::Deserialize;
 use std::env;
 
@@ -55,6 +56,7 @@ impl<'a> Reddit<'a> {
                 format!("listothis-playlist-updater/{}", env!("CARGO_PKG_VERSION")),
             )
             .send()?
+            .error_for_status()?
             .json::<Response>()?
             .data
             .children
@@ -70,7 +72,7 @@ impl<'a> Reddit<'a> {
             .filter_map(move |title| match re.captures(&title) {
                 Some(cap) => Some(Track::new(decoded(&cap[1]), decoded(&cap[2]))),
                 None => {
-                    println!("Failed to match: {}", title);
+                    warn!("Failed to match: {}", title);
                     None
                 }
             });
@@ -105,6 +107,7 @@ fn get_access_token(client: &reqwest::Client) -> Result<String, failure::Error> 
         )
         .body(body)
         .send()?
+        .error_for_status()?
         .json()?;
 
     Ok(response.access_token)

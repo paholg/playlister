@@ -1,3 +1,4 @@
 .env
+rust.zip
 /target
 **/*.rs.bk

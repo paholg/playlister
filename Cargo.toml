@@ -3,15 +3,24 @@ authors = ["Paho Lurie-Gregg <paho.luriegregg@outreach.io>"]
 edition = "2018"
 name = "listentothis-playlist"
 version = "0.1.0"
+autobins = false
+
 [dependencies]
 dotenv = "*"
 dotenv_codegen = "*"
 failure = "*"
 htmlescape = "*"
+lambda_runtime = "*"
+log = "*"
 regex = "*"
 reqwest = "*"
 serde_json = "*"
+simple_logger = "*"
 
 [dependencies.serde]
 features = ["derive"]
 version = "*"
+
+[[bin]]
+name = "bootstrap"
+path = "src/main.rs"

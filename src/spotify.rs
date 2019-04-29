@@ -1,4 +1,5 @@
 use crate::{track::Track, AuthResponse};
+use log::{debug, error, info, warn};
 use serde::Deserialize;
 use serde_json::json;
 use std::env;
@@ -53,21 +54,24 @@ impl<'a> Spotify<'a> {
             .filter_map(|track| match self.search(track.clone()) {
                 Ok(spotify_track) => Some(spotify_track),
                 Err(e) => {
-                    println!("Error in search result for {}: {}", track, e);
+                    error!("Error in search result for {}: {}", track, e);
                     None
                 }
             })
             .filter_map(|spotify_track| match spotify_track.record {
-                Some(record) => Some(record.uri),
+                Some(record) => {
+                    debug!("Found '{}' to match {}", record.name, spotify_track.track);
+                    Some(record.uri)
+                }
                 None => {
-                    println!("Failed to find track for: {}", spotify_track.track);
+                    warn!("Failed to find track: {}", spotify_track.track);
                     n_failed += 1;
                     None
                 }
             })
             .collect();
 
-        println!("Found {} of {} tracks", uris.len(), uris.len() + n_failed);
+        info!("Found {} of {} tracks", uris.len(), uris.len() + n_failed);
 
         let body = json!({ "uris": uris });
 
@@ -112,6 +116,7 @@ impl<'a> Spotify<'a> {
                 ("limit", "1"),
             ])
             .send()?
+            .error_for_status()?
             .json()?;
 
         let record = response
@@ -149,6 +154,7 @@ fn get_access_token(client: &reqwest::Client, body: String) -> Result<String, fa
         )
         .body(body)
         .send()?
+        .error_for_status()?
         .json()?;
 
     Ok(response.access_token)
