@@ -3,9 +3,14 @@ use log::warn;
 use serde::Deserialize;
 use std::env;
 
-#[derive(Deserialize, Debug)]
 struct Post {
     title: String,
+}
+
+impl Post {
+    fn new(title: String) -> Post {
+        Post { title }
+    }
 }
 
 pub struct Reddit<'a> {
@@ -23,9 +28,26 @@ impl<'a> Reddit<'a> {
         })
     }
 
-    pub fn listentothis_hot(&self) -> Result<impl Iterator<Item = Track>, failure::Error> {
-        let re = regex::Regex::new(r"(.*?)\s+\W+\s+(.*?)\s*[\(\[]")?;
+    pub fn tracks(
+        &self,
+        subreddit: &str,
+        regex: regex::Regex,
+    ) -> Result<impl Iterator<Item = Track>, failure::Error> {
+        let tracks = self
+            .posts(subreddit)?
+            .map(|post| post.title)
+            .map(|title| htmlescape::decode_html(&title).unwrap_or_else(|_| title))
+            .filter_map(move |title| match regex.captures(&title) {
+                Some(cap) => Some(Track::new(cap[1].to_string(), cap[2].to_string())),
+                None => {
+                    warn!("Failed to match: {}", title);
+                    None
+                }
+            });
+        Ok(tracks)
+    }
 
+    fn posts(&self, subreddit: &str) -> Result<impl Iterator<Item = Post>, failure::Error> {
         #[derive(Deserialize, Debug)]
         struct Response {
             data: ResponseData,
@@ -33,23 +55,22 @@ impl<'a> Reddit<'a> {
 
         #[derive(Deserialize, Debug)]
         struct ResponseData {
-            children: Vec<ChildData>,
-        }
-
-        #[derive(Deserialize, Debug)]
-        struct ChildData {
-            data: Child,
+            children: Vec<Child>,
         }
 
         #[derive(Deserialize, Debug)]
         struct Child {
-            author_flair_text: Option<String>,
+            data: ChildData,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct ChildData {
             title: String,
         }
 
-        let tracks = self
+        let posts = self
             .client
-            .get("https://oauth.reddit.com/r/listentothis/hot")
+            .get(&url(subreddit))
             .bearer_auth(&self.access_token)
             .header(
                 reqwest::header::USER_AGENT,
@@ -61,24 +82,15 @@ impl<'a> Reddit<'a> {
             .data
             .children
             .into_iter()
-            .map(|child| child.data)
-            .filter_map(|child| {
-                if child.author_flair_text == Some("robot".to_string()) {
-                    None
-                } else {
-                    Some(child.title)
-                }
-            })
+            .map(|child| child.data.title)
             .map(|title| htmlescape::decode_html(&title).unwrap_or_else(|_| title))
-            .filter_map(move |title| match re.captures(&title) {
-                Some(cap) => Some(Track::new(cap[1].to_string(), cap[2].to_string())),
-                None => {
-                    warn!("Failed to match: {}", title);
-                    None
-                }
-            });
-        Ok(tracks)
+            .map(|title| Post::new(title));
+        Ok(posts)
     }
+}
+
+fn url(subreddit: &str) -> String {
+    format!("https://oauth.reddit.com/{}", subreddit)
 }
 
 fn get_access_token(client: &reqwest::Client) -> Result<String, failure::Error> {

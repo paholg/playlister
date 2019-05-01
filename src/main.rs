@@ -26,9 +26,11 @@ fn main() -> Result<(), failure::Error> {
 }
 
 fn perform() -> Result<(), failure::Error> {
+    let listentothis_regex = regex::Regex::new(r"(.*?)\s+[-–—\s]+\s+(.*?)\s*[\(\[]")?;
+
     info!("Beginning update");
     let client = reqwest::Client::new();
-    let tracks = reddit::Reddit::new(&client)?.listentothis_hot()?;
+    let tracks = reddit::Reddit::new(&client)?.tracks("r/listentothis", listentothis_regex)?;
     spotify::Spotify::new(&client)?.update_playlist(tracks)?;
     info!("Update complete");
     Ok(())
