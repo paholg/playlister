@@ -1,7 +1,5 @@
-use lambda_runtime::error::HandlerError;
-use lambda_runtime::{lambda, Context};
-use log::{error, info};
 use serde::Deserialize;
+use tracing::info;
 
 mod reddit;
 mod spotify;
@@ -12,36 +10,29 @@ struct AuthResponse {
     access_token: String,
 }
 
-fn main() -> Result<(), failure::Error> {
-    simple_logger::init_with_level(log::Level::Info)?;
-    dotenv::dotenv().ok();
+#[tokio::main]
+async fn main() -> eyre::Result<()> {
+    tracing_subscriber::fmt().init();
+    dotenv::dotenv()?;
 
-    if cfg!(target_env = "musl") {
-        lambda!(handler);
-    } else {
-        perform()?;
-    }
+    perform().await?;
 
     Ok(())
 }
 
-fn perform() -> Result<(), failure::Error> {
+async fn perform() -> eyre::Result<()> {
     let listentothis_regex = regex::Regex::new(r"(.*?)\s+[-–—\s]+\s+(.*?)\s*[\(\[]")?;
 
     info!("Beginning update");
     let client = reqwest::Client::new();
-    let tracks = reddit::Reddit::new(&client)?.tracks("r/listentothis", listentothis_regex)?;
-    spotify::Spotify::new(&client)?.update_playlist(tracks)?;
+    let tracks = reddit::Reddit::new(client.clone())
+        .await?
+        .tracks("r/listentothis", listentothis_regex)
+        .await?;
+    spotify::Spotify::new(client)
+        .await?
+        .update_playlist(tracks)
+        .await?;
     info!("Update complete");
-    Ok(())
-}
-
-fn handler(_e: serde_json::Value, _c: Context) -> Result<(), HandlerError> {
-    let result = perform();
-    if let Err(e) = &result {
-        error!("Failed: {}", e);
-    }
-    result?;
-
     Ok(())
 }

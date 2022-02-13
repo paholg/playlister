@@ -1,8 +1,9 @@
 use crate::{track::Track, AuthResponse};
-use log::{debug, error, info, warn};
+use futures::stream::{FuturesOrdered, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
-use std::env;
+use std::{env, iter::FromIterator};
+use tracing::{debug, error, info, warn};
 
 struct Record {
     uri: String,
@@ -26,16 +27,16 @@ impl SpotifyTrack {
     }
 }
 
-pub struct Spotify<'a> {
+pub struct Spotify {
     access_token: String,
     user_access_token: String,
-    client: &'a reqwest::Client,
+    client: reqwest::Client,
 }
 
-impl<'a> Spotify<'a> {
-    pub fn new(client: &reqwest::Client) -> Result<Spotify, failure::Error> {
-        let access_token = get_app_access_token(client)?;
-        let user_access_token = get_user_access_token(client)?;
+impl Spotify {
+    pub async fn new(client: reqwest::Client) -> eyre::Result<Spotify> {
+        let access_token = get_app_access_token(&client).await?;
+        let user_access_token = get_user_access_token(&client).await?;
 
         Ok(Spotify {
             access_token,
@@ -44,17 +45,22 @@ impl<'a> Spotify<'a> {
         })
     }
 
-    pub fn update_playlist<I: IntoIterator<Item = Track>>(
+    pub async fn update_playlist<I: IntoIterator<Item = Track>>(
         &self,
         tracks: I,
-    ) -> Result<(), failure::Error> {
+    ) -> eyre::Result<()> {
         let mut n_failed = 0;
-        let uris: Vec<String> = tracks
+
+        let futures = tracks.into_iter().map(|track| self.search(track));
+
+        let uris = FuturesOrdered::from_iter(futures)
+            .collect::<Vec<_>>()
+            .await
             .into_iter()
-            .filter_map(|track| match self.search(track.clone()) {
+            .filter_map(|result| match result {
                 Ok(spotify_track) => Some(spotify_track),
-                Err(e) => {
-                    error!("Error in search result for {}: {}", track, e);
+                Err(error) => {
+                    error!(%error, "Error in search result");
                     None
                 }
             })
@@ -69,7 +75,7 @@ impl<'a> Spotify<'a> {
                     None
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         info!("Found {} of {} tracks", uris.len(), uris.len() + n_failed);
 
@@ -83,13 +89,14 @@ impl<'a> Spotify<'a> {
             .bearer_auth(&self.user_access_token)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(&body)
-            .send()?
+            .send()
+            .await?
             .error_for_status()?;
 
         Ok(())
     }
 
-    fn search(&self, track: Track) -> Result<SpotifyTrack, failure::Error> {
+    async fn search(&self, track: Track) -> eyre::Result<SpotifyTrack> {
         #[derive(Deserialize, Debug)]
         struct Response {
             tracks: Items,
@@ -115,9 +122,11 @@ impl<'a> Spotify<'a> {
                 ("q", &track.as_spotify_query()),
                 ("limit", "1"),
             ])
-            .send()?
+            .send()
+            .await?
             .error_for_status()?
-            .json()?;
+            .json()
+            .await?;
 
         let record = response
             .tracks
@@ -129,19 +138,19 @@ impl<'a> Spotify<'a> {
     }
 }
 
-fn get_app_access_token(client: &reqwest::Client) -> Result<String, failure::Error> {
-    get_access_token(client, "grant_type=client_credentials".into())
+async fn get_app_access_token(client: &reqwest::Client) -> eyre::Result<String> {
+    get_access_token(client, "grant_type=client_credentials".into()).await
 }
 
-fn get_user_access_token(client: &reqwest::Client) -> Result<String, failure::Error> {
+async fn get_user_access_token(client: &reqwest::Client) -> eyre::Result<String> {
     let body = format!(
         "grant_type=refresh_token&refresh_token={}",
         env::var("SPOTIFY_REFRESH_TOKEN")?
     );
-    get_access_token(client, body)
+    get_access_token(client, body).await
 }
 
-fn get_access_token(client: &reqwest::Client, body: String) -> Result<String, failure::Error> {
+async fn get_access_token(client: &reqwest::Client, body: String) -> eyre::Result<String> {
     let response: AuthResponse = client
         .post("https://accounts.spotify.com/api/token")
         .basic_auth(
@@ -153,9 +162,11 @@ fn get_access_token(client: &reqwest::Client, body: String) -> Result<String, fa
             "application/x-www-form-urlencoded",
         )
         .body(body)
-        .send()?
+        .send()
+        .await?
         .error_for_status()?
-        .json()?;
+        .json()
+        .await?;
 
     Ok(response.access_token)
 }

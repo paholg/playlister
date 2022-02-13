@@ -1,7 +1,7 @@
 use crate::{track::Track, AuthResponse};
-use log::warn;
 use serde::Deserialize;
 use std::env;
+use tracing::warn;
 
 struct Post {
     title: String,
@@ -13,14 +13,14 @@ impl Post {
     }
 }
 
-pub struct Reddit<'a> {
+pub struct Reddit {
     access_token: String,
-    client: &'a reqwest::Client,
+    client: reqwest::Client,
 }
 
-impl<'a> Reddit<'a> {
-    pub fn new(client: &reqwest::Client) -> Result<Reddit, failure::Error> {
-        let access_token = get_access_token(client)?;
+impl Reddit {
+    pub async fn new(client: reqwest::Client) -> eyre::Result<Reddit> {
+        let access_token = get_access_token(&client).await?;
 
         Ok(Reddit {
             access_token,
@@ -28,13 +28,14 @@ impl<'a> Reddit<'a> {
         })
     }
 
-    pub fn tracks(
+    pub async fn tracks(
         &self,
         subreddit: &str,
         regex: regex::Regex,
-    ) -> Result<impl Iterator<Item = Track>, failure::Error> {
+    ) -> eyre::Result<impl Iterator<Item = Track>> {
         let tracks = self
-            .posts(subreddit)?
+            .posts(subreddit)
+            .await?
             .map(|post| post.title)
             .map(|title| htmlescape::decode_html(&title).unwrap_or_else(|_| title))
             .filter_map(move |title| match regex.captures(&title) {
@@ -47,7 +48,7 @@ impl<'a> Reddit<'a> {
         Ok(tracks)
     }
 
-    fn posts(&self, subreddit: &str) -> Result<impl Iterator<Item = Post>, failure::Error> {
+    async fn posts(&self, subreddit: &str) -> eyre::Result<impl Iterator<Item = Post>> {
         #[derive(Deserialize, Debug)]
         struct Response {
             data: ResponseData,
@@ -76,9 +77,11 @@ impl<'a> Reddit<'a> {
                 reqwest::header::USER_AGENT,
                 format!("listothis-playlist-updater/{}", env!("CARGO_PKG_VERSION")),
             )
-            .send()?
+            .send()
+            .await?
             .error_for_status()?
-            .json::<Response>()?
+            .json::<Response>()
+            .await?
             .data
             .children
             .into_iter()
@@ -93,7 +96,7 @@ fn url(subreddit: &str) -> String {
     format!("https://oauth.reddit.com/{}", subreddit)
 }
 
-fn get_access_token(client: &reqwest::Client) -> Result<String, failure::Error> {
+async fn get_access_token(client: &reqwest::Client) -> eyre::Result<String> {
     let body = format!(
         "grant_type=password&username={}&password={}",
         env::var("REDDIT_USERNAME")?,
@@ -115,9 +118,11 @@ fn get_access_token(client: &reqwest::Client) -> Result<String, failure::Error> 
             "application/x-www-form-urlencoded",
         )
         .body(body)
-        .send()?
+        .send()
+        .await?
         .error_for_status()?
-        .json()?;
+        .json()
+        .await?;
 
     Ok(response.access_token)
 }

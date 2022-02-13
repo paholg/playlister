@@ -7,20 +7,17 @@ license = "MIT or Apache-2.0"
 autobins = false
 
 [dependencies]
-dotenv = "*"
-dotenv_codegen = "*"
-failure = "*"
-htmlescape = "*"
-lambda_runtime = "*"
-log = "*"
-regex = "*"
-reqwest = "*"
-serde_json = "*"
-simple_logger = "*"
-
-[dependencies.serde]
-features = ["derive"]
-version = "*"
+dotenv = "0.15.0"
+eyre = "0.6.6"
+futures = "0.3.21"
+htmlescape = "0.3.1"
+regex = "1.5.4"
+reqwest = { version = "0.11.9", features = ["json"] }
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+tokio = { version = "1.16.1", features = ["full"] }
+tracing = "0.1.30"
+tracing-subscriber = "0.3.8"
 
 [[bin]]
 name = "bootstrap"
