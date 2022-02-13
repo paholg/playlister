@@ -1,20 +1,24 @@
 # r/listentothis Spotify playlist updater
 
-This is just a simple tool to scrape hot of r/listentothis and to update a Spotify playlist with the
+This is a tool to scrape hot of r/listentothis and update playlists with the
 contents.
 
-You can expect the playlist to be updated roughly once per day, and can find it here:
+Spotify playlist:
 https://open.spotify.com/playlist/0QLH8AqDfjGmcWK1vnf2sI
 
-It does a pretty rough job searching Spotify, so expect it to miss tracks. Expect the playlist to
-contain roughly 70 of the top 100 posts on r/listentothis.
+Tidal playlist:
+https://listen.tidal.com/playlist/7772be23-3b43-418b-b403-2b4832f8a76f
 
-If you have any suggestions for improvement, or requests, please file an issue or open a PR!
+Expect the playlists to contain roughly 70 of the top 100 posts on
+r/listentothis.
+
+If you have any suggestions for improvement, or requests, please file an issue
+or open a PR!
 
 ## Contributing
 
-To run locally, you will need access to both Reddit and Spotify. You will want a `.env` file with
-the following environment variables:
+To run locally, you will need access to both Reddit and your music app of
+choice. You will want a `.env` file with the following environment variables:
 
 ```
 REDDIT_CLIENT_ID
