@@ -3,9 +3,10 @@ use tracing::{error, info, Level};
 
 use crate::track::Track;
 
-mod reddit;
-mod spotify;
-mod track;
+pub mod reddit;
+pub mod spotify;
+pub mod tidal;
+pub mod track;
 
 #[derive(Deserialize)]
 struct AuthResponse {
@@ -35,28 +36,23 @@ async fn perform() -> eyre::Result<()> {
 
     let mut handles = Vec::new();
 
-    let client_clone = client.clone();
-    let tracks_clone = tracks.clone();
-    let spotify = tokio::spawn(spotify::run(client_clone, tracks_clone));
-    handles.push(spotify);
-
     // let client_clone = client.clone();
     // let tracks_clone = tracks.clone();
-    // let tidal = tokio::spawn(async {
-    //     // TODO
-    // });
-    // handles.push(tidal);
+    // let spotify = tokio::spawn(spotify::run(client_clone, tracks_clone));
+    // handles.push(spotify);
+
+    let client_clone = client.clone();
+    let tracks_clone = tracks.clone();
+    let tidal = tokio::spawn(tidal::run(client_clone, tracks_clone));
+    handles.push(tidal);
 
     for handle in handles {
         let result = handle.await;
-        match result {
-            Err(error) => {
-                error!(%error, "Join error")
-            }
-            _ => {}
+
+        if let Err(error) = result {
+            error!(%error, "Join error")
         }
     }
-
     info!("Update complete");
     Ok(())
 }

@@ -12,9 +12,12 @@ impl Track {
     }
 
     pub fn as_spotify_query(&self) -> String {
-        // let res = format!("track:\"{}\" artist:\"{}\"", self.track, self.artist);
         let res = format!("{} {}", self.artist, self.track);
         res
+    }
+
+    pub fn as_tidal_query(&self) -> String {
+        self.as_spotify_query()
     }
 }
 

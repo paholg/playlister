@@ -27,11 +27,21 @@ SPOTIFY_CLIENT_ID
 SPOTIFY_CLIENT_SECRET
 SPOTIFY_PLAYLIST_ID
 SPOTIFY_REFRESH_TOKEN
+
+# For Tidal:
+TIDAL_CLIENT_ID
+TIDAL_CLIENT_SECRET
+TIDAL_REFRESH_TOKEN
+TIDAL_PLAYLIST_ID
 ```
 
-The `_ID`s and `_SECRET`s come from setting up a developer application on the respective sites. The
-`SPOTIFY_REFRESH_TOKEN` needs to be for a user account, and can be generated using the
-`spotify_token_walkthrough.sh` script.
+The `_ID`s and `_SECRET`s come from setting up a developer application on the respective sites.
+
+The `SPOTIFY_REFRESH_TOKEN` needs to be for a user account, and can be generated
+using the `spotify_token_walkthrough.sh` script.
+
+The Tidal information can be obtained from the `tidal_token.py` script, which
+requires a 0.7.x version of tidalapi (currently unpublished as of this writing).
 
 Feel free to reach out to me if you need any help.
 

@@ -22,8 +22,8 @@ struct SpotifyTrack {
 }
 
 impl SpotifyTrack {
-    fn new(track: Track, record: Option<Record>) -> SpotifyTrack {
-        SpotifyTrack { track, record }
+    fn new(track: Track, record: Option<Record>) -> Self {
+        Self { track, record }
     }
 }
 
@@ -44,11 +44,11 @@ impl Spotify {
         Self::new(client).await?.update_playlist(tracks).await
     }
 
-    async fn new(client: reqwest::Client) -> eyre::Result<Spotify> {
+    async fn new(client: reqwest::Client) -> eyre::Result<Self> {
         let access_token = get_app_access_token(&client).await?;
         let user_access_token = get_user_access_token(&client).await?;
 
-        Ok(Spotify {
+        Ok(Self {
             access_token,
             client,
             user_access_token,
