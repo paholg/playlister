@@ -1,7 +1,7 @@
-# r/listentothis Spotify playlist updater
+# r/listentothis playlist updater
 
-This is a tool to scrape hot of r/listentothis and update playlists with the
-contents.
+This is a tool to scrape hot of https://reddit.com/r/listentothis and update
+playlists with the contents.
 
 Spotify playlist:
 https://open.spotify.com/playlist/0QLH8AqDfjGmcWK1vnf2sI
@@ -35,14 +35,14 @@ SPOTIFY_REFRESH_TOKEN
 # For Tidal:
 TIDAL_CLIENT_ID
 TIDAL_CLIENT_SECRET
-TIDAL_REFRESH_TOKEN
 TIDAL_PLAYLIST_ID
+TIDAL_REFRESH_TOKEN
 ```
 
 The `_ID`s and `_SECRET`s come from setting up a developer application on the respective sites.
 
 The `SPOTIFY_REFRESH_TOKEN` needs to be for a user account, and can be generated
-using the `spotify_token_walkthrough.sh` script.
+using the `spotify_token.sh` script.
 
 The Tidal information can be obtained from the `tidal_token.py` script, which
 requires a 0.7.x version of tidalapi (currently unpublished as of this writing).
