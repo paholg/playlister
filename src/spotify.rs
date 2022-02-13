@@ -27,14 +27,24 @@ impl SpotifyTrack {
     }
 }
 
-pub struct Spotify {
+pub async fn run(client: reqwest::Client, tracks: Vec<Track>) {
+    if let Err(error) = Spotify::run(client, tracks).await {
+        tracing::error!(%error, "Spotify error");
+    }
+}
+
+struct Spotify {
     access_token: String,
     user_access_token: String,
     client: reqwest::Client,
 }
 
 impl Spotify {
-    pub async fn new(client: reqwest::Client) -> eyre::Result<Spotify> {
+    async fn run(client: reqwest::Client, tracks: Vec<Track>) -> eyre::Result<()> {
+        Self::new(client).await?.update_playlist(tracks).await
+    }
+
+    async fn new(client: reqwest::Client) -> eyre::Result<Spotify> {
         let access_token = get_app_access_token(&client).await?;
         let user_access_token = get_user_access_token(&client).await?;
 
@@ -45,10 +55,7 @@ impl Spotify {
         })
     }
 
-    pub async fn update_playlist<I: IntoIterator<Item = Track>>(
-        &self,
-        tracks: I,
-    ) -> eyre::Result<()> {
+    async fn update_playlist<I: IntoIterator<Item = Track>>(&self, tracks: I) -> eyre::Result<()> {
         let mut n_failed = 0;
 
         let futures = tracks.into_iter().map(|track| self.search(track));

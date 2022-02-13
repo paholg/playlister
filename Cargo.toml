@@ -1,7 +1,7 @@
 [package]
 authors = ["Paho Lurie-Gregg <paho.luriegregg@outreach.io>"]
 edition = "2021"
-name = "listentothis-playlist"
+name = "playlister"
 version = "0.1.0"
 license = "MIT or Apache-2.0"
 
