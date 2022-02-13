@@ -1,8 +1,8 @@
 [package]
-authors = ["Paho Lurie-Gregg <paho.luriegregg@outreach.io>"]
+authors = ["Paho Lurie-Gregg <paho@paholg.com>"]
 edition = "2021"
 name = "playlister"
-version = "0.1.0"
+version = "1.0.0"
 license = "MIT or Apache-2.0"
 
 [dependencies]
