@@ -22,6 +22,7 @@ REDDIT_CLIENT_SECRET
 REDDIT_USERNAME
 REDDIT_PASSWORD
 
+# For Spotify:
 SPOTIFY_CLIENT_ID
 SPOTIFY_CLIENT_SECRET
 SPOTIFY_PLAYLIST_ID
@@ -30,7 +31,7 @@ SPOTIFY_REFRESH_TOKEN
 
 The `_ID`s and `_SECRET`s come from setting up a developer application on the respective sites. The
 `SPOTIFY_REFRESH_TOKEN` needs to be for a user account, and can be generated using the
-`token_walkthrough.sh` script.
+`spotify_token_walkthrough.sh` script.
 
 Feel free to reach out to me if you need any help.
 
