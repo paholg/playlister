@@ -36,10 +36,10 @@ async fn perform() -> eyre::Result<()> {
 
     let mut handles = Vec::new();
 
-    // let client_clone = client.clone();
-    // let tracks_clone = tracks.clone();
-    // let spotify = tokio::spawn(spotify::run(client_clone, tracks_clone));
-    // handles.push(spotify);
+    let client_clone = client.clone();
+    let tracks_clone = tracks.clone();
+    let spotify = tokio::spawn(spotify::run(client_clone, tracks_clone));
+    handles.push(spotify);
 
     let client_clone = client.clone();
     let tracks_clone = tracks.clone();
