@@ -3,7 +3,7 @@ use futures::stream::{FuturesOrdered, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use std::{env, iter::FromIterator};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 struct Record {
     uri: String,
@@ -77,7 +77,7 @@ impl Spotify {
                     Some(record.uri)
                 }
                 None => {
-                    warn!("Failed to find track: {}", spotify_track.track);
+                    debug!("Failed to find track: {}", spotify_track.track);
                     n_failed += 1;
                     None
                 }

@@ -3,7 +3,7 @@ use futures::stream::{FuturesOrdered, StreamExt};
 use itertools::Itertools;
 use serde::Deserialize;
 use std::{env, iter::FromIterator};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 struct Record {
     id: u64,
@@ -141,7 +141,7 @@ impl Tidal {
                     Some(record.id)
                 }
                 None => {
-                    warn!("Failed to find track: {}", tidal_track.track);
+                    debug!("Failed to find track: {}", tidal_track.track);
                     n_failed += 1;
                     None
                 }

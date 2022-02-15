@@ -1,4 +1,7 @@
+use eyre::Report;
+use lambda_runtime::Context;
 use serde::Deserialize;
+use serde_json::json;
 use tracing::{error, info, Level};
 
 use crate::track::Track;
@@ -15,12 +18,37 @@ struct AuthResponse {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
-    dotenv::dotenv()?;
+    let log_subscriber = tracing_subscriber::fmt().with_max_level(Level::INFO);
+    let _ = dotenv::dotenv();
 
-    perform().await?;
+    if cfg!(target_env = "musl") {
+        log_subscriber.with_ansi(false).init();
+        let func = lambda_runtime::handler_fn(lambda_handler);
+
+        // TODO: Improve error conversion
+        lambda_runtime::run(func)
+            .await
+            .map_err(|e| Report::msg(e.to_string()))?;
+    } else {
+        log_subscriber.init();
+        perform().await?;
+    }
 
     Ok(())
+}
+
+async fn lambda_handler(
+    _event: serde_json::Value,
+    _c: Context,
+) -> Result<serde_json::Value, lambda_runtime::Error> {
+    let result = perform().await;
+
+    if let Err(e) = &result {
+        error!("Failed: {}", e);
+    }
+    result?;
+
+    Ok(json!({}))
 }
 
 async fn perform() -> eyre::Result<()> {
