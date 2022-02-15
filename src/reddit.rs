@@ -37,7 +37,6 @@ impl Reddit {
             .posts(subreddit)
             .await?
             .map(|post| post.title)
-            .map(|title| htmlescape::decode_html(&title).unwrap_or(title))
             .filter_map(move |title| match regex.captures(&title) {
                 Some(cap) => Some(Track::new(cap[1].to_string(), cap[2].to_string())),
                 None => {
