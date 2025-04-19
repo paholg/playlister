@@ -1,21 +1,23 @@
 [package]
 authors = ["Paho Lurie-Gregg <paho@paholg.com>"]
-edition = "2021"
-name = "playlister"
-version = "1.0.0"
+edition = "2024"
+name    = "playlister"
+version = "2.0.0"
 license = "MIT or Apache-2.0"
 
 [dependencies]
-dotenv = "0.15.0"
-eyre = "0.6.6"
-futures = "0.3.21"
-htmlescape = "0.3.1"
-itertools = "0.10.3"
-lambda_runtime = "0.4.1"
-regex = "1.5.4"
-reqwest = { version = "0.11.9", features = ["json"] }
-serde = { version = "1.0.136", features = ["derive"] }
-serde_json = "1.0.79"
-tokio = { version = "1.16.1", features = ["full"] }
-tracing = "0.1.30"
-tracing-subscriber = "0.3.8"
+color-eyre         = "0.6.3"
+config             = "0.15.11"
+dashmap            = { version = "6.1.0", features = ["serde"] }
+dotenv             = "0.15.0"
+eyre               = "0.6.12"
+futures            = "0.3.31"
+htmlescape         = "0.3.1"
+itertools          = "0.14.0"
+regex              = "1.11.1"
+reqwest            = { version = "0.12.15", features = ["json"] }
+serde              = { version = "1.0.219", features = ["derive", "rc"] }
+serde_json         = "1.0.140"
+tokio              = { version = "1.44.2", features = ["full"] }
+tracing            = "0.1.41"
+tracing-subscriber = "0.3.19"

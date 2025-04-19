@@ -1,77 +1,75 @@
-use eyre::Report;
-use lambda_runtime::Context;
+use std::path::PathBuf;
+
+use config::Environment;
+use playlister::{
+    Data,
+    cache::Cache,
+    reddit,
+    spotify::{self, Spotify},
+    tidal::{self, Tidal},
+    track::Track,
+};
 use serde::Deserialize;
-use serde_json::json;
-use tracing::{error, info, Level};
+use tracing::{Level, error, info};
 
-use crate::track::Track;
-
-pub mod reddit;
-pub mod spotify;
-pub mod tidal;
-pub mod track;
-
-#[derive(Deserialize)]
-struct AuthResponse {
-    access_token: String,
+#[derive(Deserialize, Debug)]
+pub struct Settings {
+    cache_dir: Option<PathBuf>,
+    reddit: reddit::Settings,
+    spotify: spotify::Settings,
+    tidal: tidal::Settings,
 }
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    let log_subscriber = tracing_subscriber::fmt().with_max_level(Level::INFO);
+    color_eyre::install()?;
+
+    let log_subscriber = tracing_subscriber::fmt()
+        .with_max_level(Level::INFO)
+        .with_file(true)
+        .with_line_number(true);
     let _ = dotenv::dotenv();
 
-    if cfg!(target_env = "musl") {
-        log_subscriber.with_ansi(false).init();
-        let func = lambda_runtime::handler_fn(lambda_handler);
-
-        // TODO: Improve error conversion
-        lambda_runtime::run(func)
-            .await
-            .map_err(|e| Report::msg(e.to_string()))?;
-    } else {
-        log_subscriber.init();
-        perform().await?;
-    }
+    log_subscriber.init();
+    run().await?;
 
     Ok(())
 }
 
-async fn lambda_handler(
-    _event: serde_json::Value,
-    _c: Context,
-) -> Result<serde_json::Value, lambda_runtime::Error> {
-    let result = perform().await;
+async fn run() -> eyre::Result<()> {
+    info!("Beginning update");
 
-    if let Err(e) = &result {
-        error!("Failed: {}", e);
-    }
-    result?;
+    let config = config::Config::builder()
+        .add_source(Environment::default().separator("__"))
+        .build()?;
+    let settings: Settings = config.try_deserialize()?;
 
-    Ok(json!({}))
-}
+    let cache = if let Some(path) = &settings.cache_dir {
+        if std::fs::exists(path)? {
+            serde_json::from_str(&std::fs::read_to_string(path)?)?
+        } else {
+            Cache::default()
+        }
+    } else {
+        Cache::default()
+    };
 
-async fn perform() -> eyre::Result<()> {
     let listentothis_regex = regex::Regex::new(r"(.*?)\s+[-–—\s]+\s+(.*?)\s*[\(\[]")?;
 
-    info!("Beginning update");
     let client = reqwest::Client::new();
-    let tracks: Vec<Track> = reddit::Reddit::new(client.clone())
+    let tracks: Vec<Track> = reddit::Reddit::new(settings.reddit, client.clone())
         .await?
         .tracks("r/listentothis", listentothis_regex)
-        .await?
-        .collect();
+        .await?;
 
     let mut handles = Vec::new();
 
-    let client_clone = client.clone();
-    let tracks_clone = tracks.clone();
-    let spotify = tokio::spawn(spotify::run(client_clone, tracks_clone));
+    let spotify: Data<Spotify> = Data::new(&cache, &client, settings.spotify, &tracks);
+    let spotify = tokio::spawn(spotify.run());
     handles.push(spotify);
 
-    let client_clone = client.clone();
-    let tracks_clone = tracks.clone();
-    let tidal = tokio::spawn(tidal::run(client_clone, tracks_clone));
+    let tidal: Data<Tidal> = Data::new(&cache, &client, settings.tidal, &tracks);
+    let tidal = tokio::spawn(tidal.run());
     handles.push(tidal);
 
     for handle in handles {
@@ -80,6 +78,12 @@ async fn perform() -> eyre::Result<()> {
         if let Err(error) = result {
             error!(%error, "Join error")
         }
+    }
+
+    if let Some(path) = settings.cache_dir {
+        cache.trim(&tracks);
+        let ser = serde_json::to_string(&cache)?;
+        std::fs::write(path, ser)?;
     }
     info!("Update complete");
     Ok(())

@@ -1,11 +1,12 @@
-use crate::{track::Track, AuthResponse};
+use crate::{AuthResponse, Data, JsonRequest, Secret, Service, track::Track};
 use futures::stream::{FuturesOrdered, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{env, iter::FromIterator};
-use tracing::{debug, error, info};
+use std::iter::FromIterator;
+use tracing::{error, info};
 
-struct Record {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Record {
     uri: String,
     name: String,
 }
@@ -16,49 +17,55 @@ impl Record {
     }
 }
 
-struct SpotifyTrack {
-    track: Track,
-    record: Option<Record>,
+#[derive(Deserialize, Debug)]
+pub struct Settings {
+    client_id: String,
+    client_secret: Secret<String>,
+    refresh_token: Secret<String>,
+    playlist_id: String,
 }
 
-impl SpotifyTrack {
-    fn new(track: Track, record: Option<Record>) -> Self {
-        Self { track, record }
-    }
+pub struct Spotify {
+    data: Data<Self>,
+    app_access_token: Secret<String>,
+    user_access_token: Secret<String>,
 }
 
-pub async fn run(client: reqwest::Client, tracks: Vec<Track>) {
-    if let Err(error) = Spotify::run(client, tracks).await {
-        tracing::error!(%error, "Spotify error");
-    }
-}
+impl Service for Spotify {
+    type Settings = Settings;
 
-struct Spotify {
-    access_token: String,
-    user_access_token: String,
-    client: reqwest::Client,
-}
-
-impl Spotify {
-    async fn run(client: reqwest::Client, tracks: Vec<Track>) -> eyre::Result<()> {
-        Self::new(client).await?.update_playlist(tracks).await
-    }
-
-    async fn new(client: reqwest::Client) -> eyre::Result<Self> {
-        let access_token = get_app_access_token(&client).await?;
-        let user_access_token = get_user_access_token(&client).await?;
+    async fn new(data: Data<Self>) -> eyre::Result<Self> {
+        let app_access_token = data.get_app_access_token().await?;
+        let user_access_token = data.get_user_access_token().await?;
 
         Ok(Self {
-            access_token,
-            client,
+            data,
+            app_access_token,
             user_access_token,
         })
     }
 
-    async fn update_playlist<I: IntoIterator<Item = Track>>(&self, tracks: I) -> eyre::Result<()> {
+    async fn run(&self) -> eyre::Result<()> {
+        self.update_playlist().await
+    }
+}
+
+impl Spotify {
+    async fn update_playlist(&self) -> eyre::Result<()> {
         let mut n_failed = 0;
 
-        let futures = tracks.into_iter().map(|track| self.search(track));
+        let futures = self.data.tracks.iter().map(|track| async {
+            if let Some(record) = self.data.cache.get_spotify(track) {
+                Ok(Some(record))
+            } else {
+                let result = self.search(track).await;
+
+                if let Ok(Some(record)) = &result {
+                    self.data.cache.set_spotify(track.clone(), record.clone());
+                }
+                result
+            }
+        });
 
         let uris = FuturesOrdered::from_iter(futures)
             .collect::<Vec<_>>()
@@ -71,13 +78,9 @@ impl Spotify {
                     None
                 }
             })
-            .filter_map(|spotify_track| match spotify_track.record {
-                Some(record) => {
-                    debug!("Found '{}' to match {}", record.name, spotify_track.track);
-                    Some(record.uri)
-                }
+            .filter_map(|record| match record {
+                Some(record) => Some(record.uri),
                 None => {
-                    debug!("Failed to find track: {}", spotify_track.track);
                     n_failed += 1;
                     None
                 }
@@ -88,22 +91,21 @@ impl Spotify {
 
         let body = json!({ "uris": uris });
 
-        self.client
-            .put(&format!(
+        self.data
+            .client
+            .put(format!(
                 "https://api.spotify.com/v1/playlists/{}/tracks",
-                env::var("SPOTIFY_PLAYLIST_ID")?
+                self.data.settings.playlist_id
             ))
-            .bearer_auth(&self.user_access_token)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .bearer_auth(self.user_access_token.expose_secret())
             .json(&body)
-            .send()
-            .await?
-            .error_for_status()?;
+            .send_it()
+            .await?;
 
         Ok(())
     }
 
-    async fn search(&self, track: Track) -> eyre::Result<SpotifyTrack> {
+    async fn search(&self, track: &Track) -> eyre::Result<Option<Record>> {
         #[derive(Deserialize, Debug)]
         struct Response {
             tracks: Items,
@@ -121,59 +123,54 @@ impl Spotify {
         }
 
         let response: Response = self
+            .data
             .client
             .get("https://api.spotify.com/v1/search")
-            .bearer_auth(&self.access_token)
+            .bearer_auth(self.app_access_token.expose_secret())
             .query(&[
                 ("type", "track"),
                 ("q", &track.as_spotify_query()),
                 ("limit", "1"),
             ])
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
+            .send_it_json()
             .await?;
 
         let record = response
             .tracks
             .items
-            .get(0)
+            .first()
             .map(|item| Record::new(item.uri.clone(), item.name.clone()));
 
-        Ok(SpotifyTrack::new(track, record))
+        Ok(record)
     }
 }
 
-async fn get_app_access_token(client: &reqwest::Client) -> eyre::Result<String> {
-    get_access_token(client, "grant_type=client_credentials".into()).await
-}
+impl Data<Spotify> {
+    async fn get_app_access_token(&self) -> eyre::Result<Secret<String>> {
+        self.get_access_token(&[("grant_type", "client_credentials")])
+            .await
+    }
 
-async fn get_user_access_token(client: &reqwest::Client) -> eyre::Result<String> {
-    let body = format!(
-        "grant_type=refresh_token&refresh_token={}",
-        env::var("SPOTIFY_REFRESH_TOKEN")?
-    );
-    get_access_token(client, body).await
-}
+    async fn get_user_access_token(&self) -> eyre::Result<Secret<String>> {
+        self.get_access_token(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", self.settings.refresh_token.expose_secret()),
+        ])
+        .await
+    }
 
-async fn get_access_token(client: &reqwest::Client, body: String) -> eyre::Result<String> {
-    let response: AuthResponse = client
-        .post("https://accounts.spotify.com/api/token")
-        .basic_auth(
-            env::var("SPOTIFY_CLIENT_ID")?,
-            Some(env::var("SPOTIFY_CLIENT_SECRET")?),
-        )
-        .header(
-            reqwest::header::CONTENT_TYPE,
-            "application/x-www-form-urlencoded",
-        )
-        .body(body)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    async fn get_access_token(&self, body: &[(&str, &str)]) -> eyre::Result<Secret<String>> {
+        let response: AuthResponse = self
+            .client
+            .post("https://accounts.spotify.com/api/token")
+            .basic_auth(
+                &self.settings.client_id,
+                Some(self.settings.client_secret.expose_secret()),
+            )
+            .form(&body)
+            .send_it_json()
+            .await?;
 
-    Ok(response.access_token)
+        Ok(response.access_token)
+    }
 }

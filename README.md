@@ -18,34 +18,35 @@ or open a PR!
 ## Contributing
 
 To run locally, you will need access to both Reddit and your music app of
-choice. You will want a `.env` file with the following environment variables:
+choice. You will need the following variables set, which you can do with a .env
+file:
 
 ```
-REDDIT_CLIENT_ID
-REDDIT_CLIENT_SECRET
-REDDIT_USERNAME
-REDDIT_PASSWORD
+CACHE_DIR # Optional, will cache search results if set.
+
+REDDIT__CLIENT_ID
+REDDIT__CLIENT_SECRET
 
 # For Spotify:
-SPOTIFY_CLIENT_ID
-SPOTIFY_CLIENT_SECRET
-SPOTIFY_PLAYLIST_ID
-SPOTIFY_REFRESH_TOKEN
+SPOTIFY__CLIENT_ID
+SPOTIFY__CLIENT_SECRET
+SPOTIFY__REFRESH_TOKEN
+SPOTIFY__PLAYLIST_ID
 
 # For Tidal:
-TIDAL_CLIENT_ID
-TIDAL_CLIENT_SECRET
-TIDAL_PLAYLIST_ID
-TIDAL_REFRESH_TOKEN
+TIDAL__CLIENT_ID
+TIDAL__CLIENT_SECRET
+TIDAL__REFRESH_TOKEN
+TIDAL__PLAYLIST_ID
 ```
 
-The `_ID`s and `_SECRET`s come from setting up a developer application on the respective sites.
+The `_ID`s and `_SECRET`s for reddit and spotify come from setting up a
+developer application on the respective sites.
 
 The `SPOTIFY_REFRESH_TOKEN` needs to be for a user account, and can be generated
 using the `spotify_token.sh` script.
 
-The Tidal information can be obtained from the `tidal_token.py` script, which
-requires a 0.7.x version of tidalapi (currently unpublished as of this writing).
+The Tidal information can be obtained from the `tidal_token.py` script.
 
 Feel free to reach out to me if you need any help.
 
@@ -53,7 +54,8 @@ Feel free to reach out to me if you need any help.
 
 Licensed under either of
 
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+ * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
+   http://www.apache.org/licenses/LICENSE-2.0)
  * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
@@ -61,5 +63,5 @@ at your option.
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
-additional terms or conditions.
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.

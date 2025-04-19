@@ -1,6 +1,8 @@
 use std::fmt;
 
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Track {
     artist: String,
     track: String,
@@ -12,12 +14,13 @@ impl Track {
     }
 
     pub fn as_spotify_query(&self) -> String {
-        let res = format!("{} {}", self.artist, self.track);
-        res
+        let Track { track, artist } = self;
+        format!("track:{track} artist:{artist}")
     }
 
     pub fn as_tidal_query(&self) -> String {
-        self.as_spotify_query()
+        let res = format!("{} {}", self.artist, self.track);
+        res
     }
 }
 

@@ -1,147 +1,224 @@
-use crate::{track::Track, AuthResponse};
+use crate::{AuthResponse, Data, JsonRequest, Secret, Service, track::Track};
 use futures::stream::{FuturesOrdered, StreamExt};
 use itertools::Itertools;
-use serde::Deserialize;
-use std::{env, iter::FromIterator};
+use serde::{Deserialize, Serialize};
+use std::iter::FromIterator;
 use tracing::{debug, error, info};
 
-struct Record {
-    id: u64,
-    name: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Record {
+    id: String,
 }
 
 impl Record {
-    fn new(id: u64, name: String) -> Record {
-        Record { id, name }
+    fn new(id: String) -> Record {
+        Record { id }
     }
 }
 
-struct TidalTrack {
-    track: Track,
-    record: Option<Record>,
+#[derive(Deserialize, Debug)]
+pub struct Settings {
+    client_id: String,
+    client_secret: Secret<String>,
+    refresh_token: Secret<String>,
+    playlist_id: String,
 }
 
-impl TidalTrack {
-    fn new(track: Track, record: Option<Record>) -> Self {
-        Self { track, record }
-    }
+pub struct Tidal {
+    data: Data<Self>,
+    app_access_token: Secret<String>,
+    user_access_token: Secret<String>,
 }
 
-pub async fn run(client: reqwest::Client, tracks: Vec<Track>) {
-    if let Err(error) = Tidal::run(client, tracks).await {
-        tracing::error!(%error, "Tidal error");
-    }
-}
+impl Service for Tidal {
+    type Settings = Settings;
 
-struct Tidal {
-    client: reqwest::Client,
-    user_access_token: String,
-}
-
-impl Tidal {
-    async fn run(client: reqwest::Client, tracks: Vec<Track>) -> eyre::Result<()> {
-        Self::new(client).await?.update_playlist(tracks).await
-    }
-
-    async fn new(client: reqwest::Client) -> eyre::Result<Self> {
-        let user_access_token = get_user_access_token(&client).await?;
+    async fn new(data: Data<Self>) -> eyre::Result<Self> {
+        let app_access_token = data.get_app_access_token().await?;
+        let user_access_token = data.get_user_access_token().await?;
 
         Ok(Self {
-            client,
+            data,
+            app_access_token,
             user_access_token,
         })
     }
 
-    async fn clear_playlist(&self) -> eyre::Result<()> {
-        #[derive(Debug, Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Playlist {
-            number_of_tracks: u32,
+    async fn run(&self) -> eyre::Result<()> {
+        self.update_playlist().await
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct PlaylistItem {
+    id: String,
+    #[serde(rename = "type")]
+    ty: String,
+    meta: PlaylistItemMeta,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PlaylistItemMeta {
+    #[serde(rename = "itemId")]
+    item_id: String,
+}
+
+impl Tidal {
+    fn playlist_id(&self) -> &str {
+        &self.data.settings.playlist_id
+    }
+
+    async fn get_playlist(&self) -> eyre::Result<Vec<PlaylistItem>> {
+        #[derive(Deserialize)]
+        struct Response {
+            data: Vec<PlaylistItem>,
+            links: Links,
         }
 
-        let playlist: Playlist = self
+        #[derive(Deserialize)]
+        struct Links {
+            next: Option<String>,
+        }
+
+        debug!("getting playlist");
+        let response: Response = self
+            .data
             .client
-            .get(&format!(
-                "https://api.tidal.com/v1/playlists/{}",
-                env::var("TIDAL_PLAYLIST_ID")?
+            .get(format!(
+                "https://openapi.tidal.com/v2/playlists/{}/relationships/items",
+                self.playlist_id()
             ))
             .query(&[("countryCode", "US")])
-            // .header(reqwest::header::IF_NONE_MATCH, "*")
-            .bearer_auth(&self.user_access_token)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
+            .bearer_auth(self.app_access_token.expose_secret())
+            .send_it_json()
             .await?;
+        let mut cursor: Option<String> = response.links.next;
+        let mut result = response.data;
 
-        // Deleting back to front appears to be much faster.
-        for i in (0..playlist.number_of_tracks).rev() {
-            self.client
-                .delete(&format!(
-                    "https://api.tidal.com/v1/playlists/{}/items/{i}",
-                    env::var("TIDAL_PLAYLIST_ID")?
+        while let Some(path) = cursor {
+            debug!("paging playlist");
+            let response: Response = self
+                .data
+                .client
+                .get(format!("https://openapi.tidal.com/v2{path}",))
+                .bearer_auth(self.app_access_token.expose_secret())
+                .send_it_json()
+                .await?;
+            result.extend(response.data);
+            cursor = response.links.next;
+        }
+        Ok(result)
+    }
+
+    async fn clear_playlist(&self) -> eyre::Result<()> {
+        let playlist = self.get_playlist().await?;
+
+        #[derive(Serialize)]
+        struct Request {
+            data: Vec<PlaylistItem>,
+        }
+
+        let requests: Vec<Request> = playlist
+            .into_iter()
+            .chunks(20)
+            .into_iter()
+            .map(|chunk| Request {
+                data: chunk.into_iter().collect(),
+            })
+            .collect();
+
+        for request in requests {
+            let request_json = serde_json::to_string(&request)?;
+            debug!(%request_json, "clearing playlist");
+            self
+                .data
+                .client
+                .delete(format!(
+                    "https://openapi.tidal.com/v2/playlists/{}/relationships/items",
+                    self.playlist_id()
                 ))
-                .query(&[("countryCode", "US")])
-                .header(reqwest::header::IF_NONE_MATCH, "*")
-                .bearer_auth(&self.user_access_token)
-                .send()
-                .await?
-                .error_for_status()?;
+                .bearer_auth(self.user_access_token.expose_secret())
+                .json(&request)
+                .send_it()
+                .await?;
         }
 
         Ok(())
     }
 
-    async fn add_tracks_to_playlist(&self, tracks: Vec<u64>) -> eyre::Result<()> {
-        let track_ids = Itertools::join(&mut tracks.iter(), ",");
-        // let track_ids = tracks[0].to_string();
+    async fn add_tracks_to_playlist(&self, tracks: Vec<String>) -> eyre::Result<()> {
+        #[derive(Serialize)]
+        struct Request {
+            data: Vec<RequestData>,
+        }
 
-        let body = format!("onDupes=SKIP&onArtifactNotFound=SKIP&trackIds={track_ids}");
+        #[derive(Serialize)]
+        struct RequestData {
+            id: String,
+            #[serde(rename = "type")]
+            ty: &'static str,
+        }
 
-        // NEED SessionId for query?
-        self.client
-            .post(&format!(
-                "https://api.tidal.com/v1/playlists/{}/items",
-                env::var("TIDAL_PLAYLIST_ID")?
-            ))
-            .query(&[("limit", "100"), ("countryCode", "US")])
-            .header(reqwest::header::IF_NONE_MATCH, "*")
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                "application/x-www-form-urlencoded",
-            )
-            .bearer_auth(&self.user_access_token)
-            .body(body)
-            .send()
-            .await?
-            .error_for_status()?;
+        let requests: Vec<Request> = tracks
+            .into_iter()
+            .chunks(20)
+            .into_iter()
+            .map(|chunk| Request {
+                data: chunk
+                    .into_iter()
+                    .map(|id| RequestData { id, ty: "tracks" })
+                    .collect(),
+            })
+            .collect();
+
+        for request in requests {
+            debug!("adding tracks to playlist");
+            self
+                .data
+                .client
+                .post(format!(
+                    "https://openapi.tidal.com/v2/playlists/{}/relationships/items",
+                    self.playlist_id()
+                ))
+                .bearer_auth(self.user_access_token.expose_secret())
+                .json(&request)
+                .send_it()
+                .await?;
+        }
 
         Ok(())
     }
 
-    async fn update_playlist<I: IntoIterator<Item = Track>>(&self, tracks: I) -> eyre::Result<()> {
+    async fn update_playlist(&self) -> eyre::Result<()> {
         let mut n_failed = 0;
 
-        let futures = tracks.into_iter().map(|track| self.search(track));
+        let futures = self.data.tracks.iter().map(|track| async {
+            if let Some(record) = self.data.cache.get_tidal(track) {
+                Ok(Some(record))
+            } else {
+                let result = self.search(track).await;
+
+                if let Ok(Some(record)) = &result {
+                    self.data.cache.set_tidal(track.clone(), record.clone());
+                }
+                result
+            }
+        });
 
         let ids = FuturesOrdered::from_iter(futures)
             .collect::<Vec<_>>()
             .await
             .into_iter()
             .filter_map(|result| match result {
-                Ok(spotify_track) => Some(spotify_track),
+                Ok(record) => Some(record),
                 Err(error) => {
                     error!(%error, "Error in search result");
                     None
                 }
             })
-            .filter_map(|tidal_track| match tidal_track.record {
-                Some(record) => {
-                    debug!("Found '{}' to match {}", record.name, tidal_track.track);
-                    Some(record.id)
-                }
+            .filter_map(|record| match record {
+                Some(record) => Some(record.id),
                 None => {
-                    debug!("Failed to find track: {}", tidal_track.track);
                     n_failed += 1;
                     None
                 }
@@ -156,75 +233,68 @@ impl Tidal {
         Ok(())
     }
 
-    async fn search(&self, track: Track) -> eyre::Result<TidalTrack> {
+    async fn search(&self, track: &Track) -> eyre::Result<Option<Record>> {
         #[derive(Deserialize, Debug)]
         struct Response {
-            tracks: Items,
+            #[serde(default)]
+            included: Vec<Included>,
         }
 
         #[derive(Deserialize, Debug)]
-        struct Items {
-            items: Vec<Item>,
+        struct Included {
+            id: String,
+            #[serde(rename = "type")]
+            ty: String,
         }
 
-        #[derive(Deserialize, Debug)]
-        struct Item {
-            id: u64,
-            title: String,
-        }
-
+        debug!("searching playlist");
         let response: Response = self
+            .data
             .client
-            .get("https://api.tidal.com/v1/search")
-            .bearer_auth(&self.user_access_token)
-            .query(&[
-                ("types", "TRACKS"),
-                ("query", &track.as_tidal_query()),
-                ("limit", "1"),
-                ("offset", "0"),
-                ("countryCode", "US"),
-            ])
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
+            .get(format!(
+                "https://openapi.tidal.com/v2/searchResults/{}",
+                track.as_tidal_query()
+            ))
+            .bearer_auth(self.app_access_token.expose_secret())
+            .query(&[("countryCode", "US"), ("include", "tracks")])
+            .send_it_json()
             .await?;
 
         let record = response
-            .tracks
-            .items
-            .get(0)
-            .map(|item| Record::new(item.id, item.title.clone()));
+            .included
+            .into_iter().find(|inc| inc.ty == "tracks")
+            .map(|item| Record::new(item.id));
 
-        Ok(TidalTrack::new(track, record))
+        Ok(record)
     }
 }
 
-async fn get_user_access_token(client: &reqwest::Client) -> eyre::Result<String> {
-    let body = format!(
-        "grant_type=refresh_token&refresh_token={}",
-        env::var("TIDAL_REFRESH_TOKEN")?
-    );
-    get_access_token(client, body).await
-}
+impl Data<Tidal> {
+    async fn get_app_access_token(&self) -> eyre::Result<Secret<String>> {
+        self.get_access_token(&[("grant_type", "client_credentials")])
+            .await
+    }
 
-async fn get_access_token(client: &reqwest::Client, body: String) -> eyre::Result<String> {
-    let response: AuthResponse = client
-        .post("https://auth.tidal.com/v1/oauth2/token")
-        .basic_auth(
-            env::var("TIDAL_CLIENT_ID")?,
-            Some(env::var("TIDAL_CLIENT_SECRET")?),
-        )
-        .header(
-            reqwest::header::CONTENT_TYPE,
-            "application/x-www-form-urlencoded",
-        )
-        .body(body)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    async fn get_user_access_token(&self) -> eyre::Result<Secret<String>> {
+        self.get_access_token(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", self.settings.refresh_token.expose_secret()),
+        ])
+        .await
+    }
 
-    Ok(response.access_token)
+    async fn get_access_token(&self, body: &[(&str, &str)]) -> eyre::Result<Secret<String>> {
+        let response: AuthResponse = self
+            .client
+            .post("https://auth.tidal.com/v1/oauth2/token")
+            .basic_auth(
+                &self.settings.client_id,
+                Some(self.settings.client_secret.expose_secret()),
+            )
+            .form(&body)
+            .send_it_json()
+            .await?;
+
+        Ok(response.access_token)
+    }
 }

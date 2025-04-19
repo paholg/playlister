@@ -1,7 +1,4 @@
 .env
 /target
-**/*.rs.bk
-
-# AWS lambda
-lambda.zip
-bootstrap
+.direnv/
+result
