@@ -36,10 +36,13 @@
         buildInputs = with pkgs; [ openssl ];
         nativeBuildInputs = with pkgs; [ pkg-config ];
 
+        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+
         crate = craneLib.buildPackage {
           inherit buildInputs nativeBuildInputs;
           src = craneLib.cleanCargoSource ./.;
           strictDeps = true;
+          meta.mainProgram = cargoToml.package.name;
         };
       in
       {
