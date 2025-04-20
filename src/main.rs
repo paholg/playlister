@@ -84,7 +84,8 @@ async fn run() -> eyre::Result<()> {
         cache.trim(&tracks);
         let ser = serde_json::to_string(&cache)?;
         std::fs::create_dir_all(&path)?;
-        std::fs::write(path, ser)?;
+        let file_path = path.join("cache.json");
+        std::fs::write(file_path, ser)?;
     }
     info!("Update complete");
     Ok(())
