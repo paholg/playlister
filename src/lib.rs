@@ -1,10 +1,10 @@
-use std::fmt;
+use std::{any::type_name, fmt};
 
 use cache::Cache;
 use eyre::Context;
 use reqwest::{RequestBuilder, StatusCode};
 use serde::{Deserialize, de::DeserializeOwned};
-use tracing::error;
+use tracing::{error, field};
 use track::Track;
 
 pub mod cache;
@@ -68,6 +68,7 @@ impl<S: Service> Data<S> {
         }
     }
 
+    #[tracing::instrument(skip(self), fields(service = type_name::<S>(), found = field::Empty))]
     pub async fn run(self) {
         let client = match S::new(self).await {
             Ok(client) => client,

@@ -3,7 +3,7 @@ use futures::stream::{FuturesOrdered, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::iter::FromIterator;
-use tracing::{error, info};
+use tracing::{Span, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -52,8 +52,6 @@ impl Service for Spotify {
 
 impl Spotify {
     async fn update_playlist(&self) -> eyre::Result<()> {
-        let mut n_failed = 0;
-
         let futures = self.data.tracks.iter().map(|track| async {
             if let Some(record) = self.data.cache.get_spotify(track) {
                 Ok(Some(record))
@@ -72,22 +70,16 @@ impl Spotify {
             .await
             .into_iter()
             .filter_map(|result| match result {
-                Ok(spotify_track) => Some(spotify_track),
+                Ok(Some(record)) => Some(record.uri),
+                Ok(None) => None,
                 Err(error) => {
                     error!(%error, "Error in search result");
                     None
                 }
             })
-            .filter_map(|record| match record {
-                Some(record) => Some(record.uri),
-                None => {
-                    n_failed += 1;
-                    None
-                }
-            })
             .collect::<Vec<_>>();
 
-        info!("Found {} of {} tracks", uris.len(), uris.len() + n_failed);
+        Span::current().record("found", uris.len());
 
         let body = json!({ "uris": uris });
 

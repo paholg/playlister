@@ -23,6 +23,7 @@ file:
 
 ```
 CACHE_DIR # Optional, will cache search results if set.
+LOG_LEVEL # Optional, defaults to info
 
 REDDIT__CLIENT_ID
 REDDIT__CLIENT_SECRET

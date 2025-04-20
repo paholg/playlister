@@ -3,7 +3,7 @@ use futures::stream::{FuturesOrdered, StreamExt};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::iter::FromIterator;
-use tracing::{debug, error, info};
+use tracing::{Span, debug, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -130,8 +130,7 @@ impl Tidal {
         for request in requests {
             let request_json = serde_json::to_string(&request)?;
             debug!(%request_json, "clearing playlist");
-            self
-                .data
+            self.data
                 .client
                 .delete(format!(
                     "https://openapi.tidal.com/v2/playlists/{}/relationships/items",
@@ -173,8 +172,7 @@ impl Tidal {
 
         for request in requests {
             debug!("adding tracks to playlist");
-            self
-                .data
+            self.data
                 .client
                 .post(format!(
                     "https://openapi.tidal.com/v2/playlists/{}/relationships/items",
@@ -190,8 +188,6 @@ impl Tidal {
     }
 
     async fn update_playlist(&self) -> eyre::Result<()> {
-        let mut n_failed = 0;
-
         let futures = self.data.tracks.iter().map(|track| async {
             if let Some(record) = self.data.cache.get_tidal(track) {
                 Ok(Some(record))
@@ -210,22 +206,16 @@ impl Tidal {
             .await
             .into_iter()
             .filter_map(|result| match result {
-                Ok(record) => Some(record),
+                Ok(Some(record)) => Some(record.id),
+                Ok(None) => None,
                 Err(error) => {
                     error!(%error, "Error in search result");
                     None
                 }
             })
-            .filter_map(|record| match record {
-                Some(record) => Some(record.id),
-                None => {
-                    n_failed += 1;
-                    None
-                }
-            })
             .collect::<Vec<_>>();
 
-        info!("Found {} of {} tracks", ids.len(), ids.len() + n_failed);
+        Span::current().record("found", ids.len());
 
         self.clear_playlist().await?;
         self.add_tracks_to_playlist(ids).await?;
@@ -262,7 +252,8 @@ impl Tidal {
 
         let record = response
             .included
-            .into_iter().find(|inc| inc.ty == "tracks")
+            .into_iter()
+            .find(|inc| inc.ty == "tracks")
             .map(|item| Record::new(item.id));
 
         Ok(record)

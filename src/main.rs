@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
 use config::Environment;
 use playlister::{
@@ -7,44 +7,63 @@ use playlister::{
     reddit,
     spotify::{self, Spotify},
     tidal::{self, Tidal},
-    track::Track,
 };
-use serde::Deserialize;
-use tracing::{Level, error, info};
+use serde::{Deserialize, Deserializer};
+use tracing::{Level, error, field, info, info_span};
+use tracing_subscriber::fmt::{self, format::FmtSpan};
 
 #[derive(Deserialize, Debug)]
 pub struct Settings {
+    #[serde(default = "info", deserialize_with = "de_level")]
+    log_level: Level,
     cache_dir: Option<PathBuf>,
     reddit: reddit::Settings,
     spotify: spotify::Settings,
     tidal: tidal::Settings,
 }
 
+fn info() -> Level {
+    Level::INFO
+}
+
+fn de_level<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Level, D::Error> {
+    let s = <&str>::deserialize(deserializer)?;
+    Level::from_str(s).map_err(|e| serde::de::Error::custom(e))
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-
-    let log_subscriber = tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_file(true)
-        .with_line_number(true);
     let _ = dotenv::dotenv();
-
-    log_subscriber.init();
-    run().await?;
-
-    Ok(())
-}
-
-async fn run() -> eyre::Result<()> {
-    info!("Beginning update");
 
     let config = config::Config::builder()
         .add_source(Environment::default().separator("__"))
         .build()?;
     let settings: Settings = config.try_deserialize()?;
 
-    let cache = if let Some(path) = &settings.cache_dir {
+    tracing_subscriber::fmt()
+        .with_max_level(settings.log_level)
+        .with_file(true)
+        .with_line_number(true)
+        .with_span_events(FmtSpan::CLOSE)
+        .with_timer(fmt::time::uptime())
+        .init();
+
+    run(settings).await?;
+
+    Ok(())
+}
+
+#[tracing::instrument(skip(settings))]
+async fn run(settings: Settings) -> eyre::Result<()> {
+    info!("Beginning update");
+
+    let cache_path = settings.cache_dir.map(|mut dir| {
+        dir.push("cache.json");
+        dir
+    });
+
+    let cache = if let Some(path) = &cache_path {
         if std::fs::exists(path)? {
             serde_json::from_str(&std::fs::read_to_string(path)?)?
         } else {
@@ -57,10 +76,17 @@ async fn run() -> eyre::Result<()> {
     let listentothis_regex = regex::Regex::new(r"(.*?)\s+[-–—\s]+\s+(.*?)\s*[\(\[]")?;
 
     let client = reqwest::Client::new();
-    let tracks: Vec<Track> = reddit::Reddit::new(settings.reddit, client.clone())
-        .await?
-        .tracks("r/listentothis", listentothis_regex)
-        .await?;
+
+    let tracks = {
+        let span = info_span!("reddit", count = field::Empty);
+        let _enter = span.enter();
+        let tracks = reddit::Reddit::new(settings.reddit, client.clone())
+            .await?
+            .tracks("r/listentothis", listentothis_regex)
+            .await?;
+        span.record("count", tracks.len());
+        tracks
+    };
 
     let mut handles = Vec::new();
 
@@ -80,13 +106,11 @@ async fn run() -> eyre::Result<()> {
         }
     }
 
-    if let Some(path) = settings.cache_dir {
+    if let Some(path) = cache_path {
         cache.trim(&tracks);
         let ser = serde_json::to_string(&cache)?;
-        std::fs::create_dir_all(&path)?;
-        let file_path = path.join("cache.json");
-        std::fs::write(file_path, ser)?;
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        std::fs::write(path, ser)?;
     }
-    info!("Update complete");
     Ok(())
 }
