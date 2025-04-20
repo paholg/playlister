@@ -1,13 +1,18 @@
-use std::{any::type_name, fmt};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use cache::Cache;
+use data::Data;
 use eyre::Context;
 use reqwest::{RequestBuilder, StatusCode};
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::{error, field};
 use track::Track;
 
 pub mod cache;
+pub mod data;
 pub mod reddit;
 pub mod spotify;
 pub mod tidal;
@@ -40,46 +45,67 @@ struct AuthResponse {
 
 #[allow(async_fn_in_trait)]
 pub trait Service: Sized {
+    const NAME: &'static str;
     type Settings;
+    type Record: Serialize + DeserializeOwned + Clone;
 
     async fn new(data: Data<Self>) -> eyre::Result<Self>;
     async fn run(&self) -> eyre::Result<()>;
 }
-
-pub struct Data<S: Service> {
-    pub cache: Cache,
-    pub client: reqwest::Client,
-    pub settings: S::Settings,
-    pub tracks: Vec<Track>,
-}
-
-impl<S: Service> Data<S> {
-    pub fn new(
-        cache: &Cache,
-        client: &reqwest::Client,
-        settings: S::Settings,
-        tracks: &[Track],
-    ) -> Self {
-        Self {
-            cache: cache.clone(),
-            client: client.clone(),
-            settings,
-            tracks: tracks.to_owned(),
-        }
+#[tracing::instrument(skip_all, fields(service = S::NAME, found = field::Empty, cache_hits = field::Empty))]
+pub async fn run<S: Service>(
+    cache_dir: Option<PathBuf>,
+    settings: S::Settings,
+    tracks: Vec<Track>,
+    client: reqwest::Client,
+) {
+    fn load_cache<S: Service>(path: Option<&Path>) -> eyre::Result<Cache<S>> {
+        let Some(p) = path else {
+            return Ok(Cache::default());
+        };
+        let cache = serde_json::from_str(&std::fs::read_to_string(p)?)?;
+        Ok(cache)
     }
 
-    #[tracing::instrument(skip(self), fields(service = type_name::<S>(), found = field::Empty))]
-    pub async fn run(self) {
-        let client = match S::new(self).await {
-            Ok(client) => client,
-            Err(error) => {
-                error!(%error, "failed to create client");
-                return;
-            }
-        };
+    fn save_cache<S: Service>(path: &Path, cache: &Cache<S>) -> eyre::Result<()> {
+        let ser = serde_json::to_string(&cache)?;
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        std::fs::write(path, ser)?;
+        Ok(())
+    }
 
-        if let Err(error) = client.run().await {
-            error!(%error, "failed to update playlist");
+    let cache_path = cache_dir.map(|mut dir| {
+        dir.push(format!("{}.json", S::NAME));
+        dir
+    });
+
+    let cache: Cache<S> = match load_cache(cache_path.as_deref()) {
+        Ok(c) => {
+            c.trim(&tracks);
+            c
+        }
+        Err(error) => {
+            error!(%error, "Failed to load cache");
+            Cache::default()
+        }
+    };
+    let data: Data<S> = Data::new(&cache, &client, settings, &tracks);
+    let client = match S::new(data).await {
+        Ok(client) => client,
+        Err(error) => {
+            error!(%error, "failed to create client");
+            return;
+        }
+    };
+
+    if let Err(error) = client.run().await {
+        error!(%error, "failed to update playlist");
+    }
+
+    if let Some(path) = cache_path {
+        cache.trim(&tracks);
+        if let Err(error) = save_cache(&path, &cache) {
+            error!(%error, "failed to save cache");
         }
     }
 }

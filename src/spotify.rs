@@ -1,9 +1,6 @@
 use crate::{AuthResponse, Data, JsonRequest, Secret, Service, track::Track};
-use futures::stream::{FuturesOrdered, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::iter::FromIterator;
-use tracing::{Span, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -32,7 +29,9 @@ pub struct Spotify {
 }
 
 impl Service for Spotify {
+    const NAME: &'static str = "spotify";
     type Settings = Settings;
+    type Record = Record;
 
     async fn new(data: Data<Self>) -> eyre::Result<Self> {
         let app_access_token = data.get_app_access_token().await?;
@@ -52,34 +51,13 @@ impl Service for Spotify {
 
 impl Spotify {
     async fn update_playlist(&self) -> eyre::Result<()> {
-        let futures = self.data.tracks.iter().map(|track| async {
-            if let Some(record) = self.data.cache.get_spotify(track) {
-                Ok(Some(record))
-            } else {
-                let result = self.search(track).await;
-
-                if let Ok(Some(record)) = &result {
-                    self.data.cache.set_spotify(track.clone(), record.clone());
-                }
-                result
-            }
-        });
-
-        let uris = FuturesOrdered::from_iter(futures)
-            .collect::<Vec<_>>()
+        let uris = self
+            .data
+            .search_all(|t| self.search(t))
             .await
             .into_iter()
-            .filter_map(|result| match result {
-                Ok(Some(record)) => Some(record.uri),
-                Ok(None) => None,
-                Err(error) => {
-                    error!(%error, "Error in search result");
-                    None
-                }
-            })
+            .map(|r| r.uri)
             .collect::<Vec<_>>();
-
-        Span::current().record("found", uris.len());
 
         let body = json!({ "uris": uris });
 

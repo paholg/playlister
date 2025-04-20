@@ -63,6 +63,7 @@
           ];
 
           env = {
+            CACHE_DIR = "cache";
             LD_LIBRARY_PATH = nixpkgs.lib.makeLibraryPath buildInputs;
             RUST_BACKTRACE = 1;
           };

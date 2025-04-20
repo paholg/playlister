@@ -1,9 +1,7 @@
 use crate::{AuthResponse, Data, JsonRequest, Secret, Service, track::Track};
-use futures::stream::{FuturesOrdered, StreamExt};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::iter::FromIterator;
-use tracing::{Span, debug, error};
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -11,7 +9,7 @@ pub struct Record {
 }
 
 impl Record {
-    fn new(id: String) -> Record {
+    pub fn new(id: String) -> Record {
         Record { id }
     }
 }
@@ -31,7 +29,9 @@ pub struct Tidal {
 }
 
 impl Service for Tidal {
+    const NAME: &'static str = "tidal";
     type Settings = Settings;
+    type Record = Record;
 
     async fn new(data: Data<Self>) -> eyre::Result<Self> {
         let app_access_token = data.get_app_access_token().await?;
@@ -64,6 +64,21 @@ struct PlaylistItemMeta {
 }
 
 impl Tidal {
+    async fn update_playlist(&self) -> eyre::Result<()> {
+        let ids = self
+            .data
+            .search_all(|t| self.search(t))
+            .await
+            .into_iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>();
+
+        self.clear_playlist().await?;
+        self.add_tracks_to_playlist(ids).await?;
+
+        Ok(())
+    }
+
     fn playlist_id(&self) -> &str {
         &self.data.settings.playlist_id
     }
@@ -183,42 +198,6 @@ impl Tidal {
                 .send_it()
                 .await?;
         }
-
-        Ok(())
-    }
-
-    async fn update_playlist(&self) -> eyre::Result<()> {
-        let futures = self.data.tracks.iter().map(|track| async {
-            if let Some(record) = self.data.cache.get_tidal(track) {
-                Ok(Some(record))
-            } else {
-                let result = self.search(track).await;
-
-                if let Ok(Some(record)) = &result {
-                    self.data.cache.set_tidal(track.clone(), record.clone());
-                }
-                result
-            }
-        });
-
-        let ids = FuturesOrdered::from_iter(futures)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .filter_map(|result| match result {
-                Ok(Some(record)) => Some(record.id),
-                Ok(None) => None,
-                Err(error) => {
-                    error!(%error, "Error in search result");
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Span::current().record("found", ids.len());
-
-        self.clear_playlist().await?;
-        self.add_tracks_to_playlist(ids).await?;
 
         Ok(())
     }
