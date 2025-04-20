@@ -43,8 +43,6 @@ async fn main() -> eyre::Result<()> {
 
     tracing_subscriber::fmt()
         .with_max_level(settings.log_level)
-        .with_file(true)
-        .with_line_number(true)
         .with_span_events(FmtSpan::CLOSE)
         .with_timer(fmt::time::uptime())
         .init();
