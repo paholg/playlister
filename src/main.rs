@@ -27,8 +27,8 @@ fn info() -> Level {
 }
 
 fn de_level<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Level, D::Error> {
-    let s = <&str>::deserialize(deserializer)?;
-    Level::from_str(s).map_err(|e| serde::de::Error::custom(e))
+    let s = String::deserialize(deserializer)?;
+    Level::from_str(&s).map_err(|e| serde::de::Error::custom(e))
 }
 
 #[tokio::main]

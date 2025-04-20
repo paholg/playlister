@@ -10,7 +10,7 @@ Tidal playlist:
 https://listen.tidal.com/playlist/7772be23-3b43-418b-b403-2b4832f8a76f
 
 Expect the playlists to contain roughly 70 of the top 100 posts on
-r/listentothis.
+r/listentothis. I run it every hour.
 
 If you have any suggestions for improvement, or requests, please file an issue
 or open a PR!
