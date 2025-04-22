@@ -15,12 +15,13 @@ impl Track {
 
     pub fn as_spotify_query(&self) -> String {
         let Track { track, artist } = self;
-        format!("track:{track} artist:{artist}")
+        let res = format!("track:{track} artist:{artist}");
+        urlencoding::encode(&res).into_owned()
     }
 
     pub fn as_tidal_query(&self) -> String {
         let res = format!("{} {}", self.artist, self.track);
-        res
+        urlencoding::encode(&res).into_owned()
     }
 }
 
