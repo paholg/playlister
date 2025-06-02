@@ -8,15 +8,55 @@ use tracing::{Span, error};
 
 use crate::{Record, track::Track};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedRecord {
+    record: Record,
+    rejected: bool,
+}
+
+/// Attempt to make a canonical representation of the artist.
+fn artist_str(artist: &str) -> String {
+    artist.to_lowercase()
+}
+
+/// Attempt to make a canonical representation of the title.
+fn title_str(title: &str) -> String {
+    title
+        .to_lowercase()
+        .chars()
+        // A lot of tracks have parentheticals which don't match between the query and result.
+        .take_while(|ch| *ch != '(')
+        .collect::<String>()
+}
+
+impl CachedRecord {
+    fn new(record: Record, track: &Track) -> Self {
+        // It's possible we got a search hit, but it's not a real match, and
+        // we should filter it out.
+        //
+        // This is just a guess at a decent heuristic.
+        let threshold = 0.7;
+
+        let rejected =
+            normalized_damerau_levenshtein(&title_str(&track.title), &title_str(&record.title))
+                < threshold
+                || record.artists.iter().all(|artist| {
+                    normalized_damerau_levenshtein(&artist_str(&track.artist), &artist_str(artist))
+                        < threshold
+                });
+
+        Self { record, rejected }
+    }
+}
+
 #[derive(Default)]
 pub struct Cache {
-    map: Arc<DashMap<Track, Option<Record>>>,
+    map: Arc<DashMap<Track, Option<CachedRecord>>>,
 }
 
 pub struct CacheResult {
-    pub result: eyre::Result<Option<Record>>,
-    pub cache_hit: bool,
-    pub filtered: bool,
+    record: eyre::Result<Option<CachedRecord>>,
+    cache_hit: bool,
 }
 
 impl Clone for Cache {
@@ -65,50 +105,29 @@ impl Cache {
         track: &'a Track,
         search: F,
     ) -> CacheResult {
-        if let Some(result) = self.map.get(track) {
+        if let Some(record) = self.map.get(track) {
             // Cache hit; we've searched for this track before, even if we didn't find it.
             return CacheResult {
-                result: Ok(result.clone()),
+                record: Ok(record.clone()),
                 cache_hit: true,
-                filtered: false,
             };
         }
 
         let record = match search(track).await {
-            Ok(record) => record,
+            Ok(record) => record.map(|r| CachedRecord::new(r, track)),
             Err(error) => {
                 return CacheResult {
-                    result: Err(error),
+                    record: Err(error),
                     cache_hit: false,
-                    filtered: false,
                 };
             }
         };
 
-        let (record, filtered) = match record {
-            None => (None, false),
-            Some(rec) => {
-                // It's possible we got a search hit, but it's not a real match, and
-                // we should filter it out. This is just a guess at a decent heuristic.
-                let threshold = 0.7;
-
-                if normalized_damerau_levenshtein(&rec.title, &track.title) < threshold
-                    && rec.artists.iter().all(|artist| {
-                        normalized_damerau_levenshtein(artist, &track.artist) < threshold
-                    })
-                {
-                    (None, true)
-                } else {
-                    (Some(rec), false)
-                }
-            }
-        };
-
         self.map.insert(track.clone(), record.clone());
+
         CacheResult {
-            result: Ok(record),
+            record: Ok(record),
             cache_hit: false,
-            filtered,
         }
     }
 
@@ -127,15 +146,26 @@ impl Cache {
         let results = FuturesOrdered::from_iter(futures).collect::<Vec<_>>().await;
         let cache_hits = results.iter().filter(|r| r.cache_hit).count();
         Span::current().record("cache_hits", cache_hits);
-        let filtered = results.iter().filter(|r| r.filtered).count();
-        Span::current().record("filtered", filtered);
+        // let rejected = results.iter().filter(|r| r.record).count();
+        // Span::current().record("filtered", filtered);
 
-        results.into_iter().map(|r| r.result).filter_map(|r| {
-            if let Err(error) = &r {
-                error!(%error, "search failed");
-            }
-            r.ok().flatten()
-        })
+        let records = results
+            .into_iter()
+            .map(|r| r.record)
+            .filter_map(|r| {
+                if let Err(error) = &r {
+                    error!(%error, "search failed");
+                }
+                r.ok().flatten()
+            })
+            .collect::<Vec<_>>();
+
+        let rejected = records.iter().filter(|r| r.rejected).count();
+        Span::current().record("rejected", rejected);
+
+        records
+            .into_iter()
+            .filter_map(|r| if r.rejected { None } else { Some(r.record) })
     }
 
     pub fn trim(&self, tracks: &[Track]) {
@@ -174,20 +204,20 @@ mod test {
         };
 
         let cache = <Cache>::default();
-        cache.with_cache(&found, search).await.result.unwrap();
-        cache.with_cache(&not_found, search).await.result.unwrap();
+        cache.with_cache(&found, search).await.record.unwrap();
+        cache.with_cache(&not_found, search).await.record.unwrap();
         assert_eq!(2, searches.load(SeqCst));
 
         let str = serde_json::to_string(&cache).unwrap();
         dbg!(&str);
         let cache: Cache = serde_json::from_str(&str).unwrap();
 
-        cache.with_cache(&found, search).await.result.unwrap();
+        cache.with_cache(&found, search).await.record.unwrap();
         assert_eq!(2, searches.load(SeqCst));
-        cache.with_cache(&not_found, search).await.result.unwrap();
+        cache.with_cache(&not_found, search).await.record.unwrap();
         assert_eq!(2, searches.load(SeqCst));
 
-        cache.with_cache(&new_track, search).await.result.unwrap();
+        cache.with_cache(&new_track, search).await.record.unwrap();
         assert_eq!(3, searches.load(SeqCst));
     }
 }

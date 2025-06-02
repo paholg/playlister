@@ -61,7 +61,7 @@ pub trait Service: Sized {
     async fn new(data: Data<Self>) -> eyre::Result<Self>;
     async fn run(&self) -> eyre::Result<()>;
 }
-#[tracing::instrument(skip_all, fields(service = S::NAME, found = field::Empty, cache_hits = field::Empty, filtered = field::Empty))]
+#[tracing::instrument(skip_all, fields(service = S::NAME, found = field::Empty, cache_hits = field::Empty, rejected = field::Empty))]
 pub async fn run<S: Service>(
     cache_dir: Option<PathBuf>,
     settings: S::Settings,
