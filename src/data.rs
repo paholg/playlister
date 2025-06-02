@@ -1,9 +1,9 @@
 use tracing::Span;
 
-use crate::{Service, cache::Cache, track::Track};
+use crate::{Record, Service, cache::Cache, track::Track};
 
 pub struct Data<S: Service> {
-    pub cache: Cache<S>,
+    pub cache: Cache,
     pub client: reqwest::Client,
     pub settings: S::Settings,
     pub tracks: Vec<Track>,
@@ -11,7 +11,7 @@ pub struct Data<S: Service> {
 
 impl<S: Service> Data<S> {
     pub fn new(
-        cache: &Cache<S>,
+        cache: &Cache,
         client: &reqwest::Client,
         settings: S::Settings,
         tracks: &[Track],
@@ -27,11 +27,11 @@ impl<S: Service> Data<S> {
     pub async fn search_all<
         'a,
         F: Fn(&'a Track) -> Fut + Clone,
-        Fut: Future<Output = eyre::Result<Option<S::Record>>>,
+        Fut: Future<Output = eyre::Result<Option<Record>>>,
     >(
         &'a self,
         search: F,
-    ) -> Vec<S::Record> {
+    ) -> Vec<Record> {
         let records = self
             .cache
             .get_all(&self.tracks, search)

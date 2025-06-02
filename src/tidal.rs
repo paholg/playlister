@@ -1,18 +1,8 @@
-use crate::{AuthResponse, Data, JsonRequest, Secret, Service, track::Track};
+use crate::{AuthResponse, Data, JsonRequest, Record, Secret, Service, track::Track};
+use futures::{StreamExt, stream::FuturesOrdered};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Record {
-    id: String,
-}
-
-impl Record {
-    pub fn new(id: String) -> Record {
-        Record { id }
-    }
-}
 
 #[derive(Deserialize, Debug)]
 pub struct Settings {
@@ -31,7 +21,6 @@ pub struct Tidal {
 impl Service for Tidal {
     const NAME: &'static str = "tidal";
     type Settings = Settings;
-    type Record = Record;
 
     async fn new(data: Data<Self>) -> eyre::Result<Self> {
         let app_access_token = data.get_app_access_token().await?;
@@ -204,20 +193,43 @@ impl Tidal {
 
     async fn search(&self, track: &Track) -> eyre::Result<Option<Record>> {
         #[derive(Deserialize, Debug)]
-        struct Response {
+        struct TrackResponse {
             #[serde(default)]
-            included: Vec<Included>,
+            included: Vec<TrackIncluded>,
         }
 
         #[derive(Deserialize, Debug)]
-        struct Included {
+        struct TrackIncluded {
             id: String,
             #[serde(rename = "type")]
             ty: String,
+            attributes: TrackAttributes,
+            relationships: Relationships,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct TrackAttributes {
+            title: String,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct Relationships {
+            artists: Relationship,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct Relationship {
+            links: Links,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct Links {
+            #[serde(rename = "self")]
+            sel: String,
         }
 
         debug!("searching playlist");
-        let response: Response = self
+        let response: TrackResponse = self
             .data
             .client
             .get(format!(
@@ -229,13 +241,70 @@ impl Tidal {
             .send_it_json()
             .await?;
 
-        let record = response
-            .included
-            .into_iter()
-            .find(|inc| inc.ty == "tracks")
-            .map(|item| Record::new(item.id));
+        let Some(included) = response.included.into_iter().find(|inc| inc.ty == "tracks") else {
+            return Ok(None);
+        };
 
-        Ok(record)
+        // To get the artist names, we have to query the link they sent us, which gives us the
+        // artist ids. Then we have to query for each id. Ugggh.
+        #[derive(Deserialize, Debug)]
+        struct ArtistIdResponse {
+            data: Vec<ArtistId>,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct ArtistId {
+            id: String,
+        }
+
+        let artist_data: ArtistIdResponse = self
+            .data
+            .client
+            .get(format!(
+                "https://openapi.tidal.com/v2{}",
+                included.relationships.artists.links.sel
+            ))
+            .bearer_auth(self.app_access_token.expose_secret())
+            .send_it_json()
+            .await?;
+
+        #[derive(Deserialize, Debug)]
+        struct ArtistDataResponse {
+            data: ArtistData,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct ArtistData {
+            attributes: ArtistAttributes,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct ArtistAttributes {
+            name: String,
+        }
+
+        let futures = artist_data.data.into_iter().map(|datum| {
+            let id = datum.id;
+
+            self.data
+                .client
+                .get(format!("https://openapi.tidal.com/v2/artists/{id}"))
+                .query(&[("countryCode", "US")])
+                .bearer_auth(self.app_access_token.expose_secret())
+                .send_it_json::<ArtistDataResponse>()
+        });
+        let results = FuturesOrdered::from_iter(futures).collect::<Vec<_>>().await;
+
+        let artists = results
+            .into_iter()
+            .map(|r| r.map(|response| response.data.attributes.name))
+            .collect::<eyre::Result<Vec<_>>>()?;
+
+        Ok(Some(Record {
+            id: included.id,
+            title: included.attributes.title,
+            artists,
+        }))
     }
 }
 

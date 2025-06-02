@@ -1,18 +1,6 @@
-use crate::{AuthResponse, Data, JsonRequest, Secret, Service, track::Track};
-use serde::{Deserialize, Serialize};
+use crate::{AuthResponse, Data, JsonRequest, Record, Secret, Service, track::Track};
+use serde::Deserialize;
 use serde_json::json;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Record {
-    uri: String,
-    name: String,
-}
-
-impl Record {
-    fn new(uri: String, name: String) -> Record {
-        Record { uri, name }
-    }
-}
 
 #[derive(Deserialize, Debug)]
 pub struct Settings {
@@ -31,7 +19,6 @@ pub struct Spotify {
 impl Service for Spotify {
     const NAME: &'static str = "spotify";
     type Settings = Settings;
-    type Record = Record;
 
     async fn new(data: Data<Self>) -> eyre::Result<Self> {
         let app_access_token = data.get_app_access_token().await?;
@@ -56,7 +43,7 @@ impl Spotify {
             .search_all(|t| self.search(t))
             .await
             .into_iter()
-            .map(|r| r.uri)
+            .map(|r| r.id)
             .collect::<Vec<_>>();
 
         let body = json!({ "uris": uris });
@@ -90,6 +77,12 @@ impl Spotify {
         struct Item {
             uri: String,
             name: String,
+            artists: Vec<Artist>,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct Artist {
+            name: String,
         }
 
         let response: Response = self
@@ -105,11 +98,11 @@ impl Spotify {
             .send_it_json()
             .await?;
 
-        let record = response
-            .tracks
-            .items
-            .first()
-            .map(|item| Record::new(item.uri.clone(), item.name.clone()));
+        let record = response.tracks.items.into_iter().next().map(|item| Record {
+            id: item.uri,
+            title: item.name,
+            artists: item.artists.into_iter().map(|artist| artist.name).collect(),
+        });
 
         Ok(record)
     }

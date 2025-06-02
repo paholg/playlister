@@ -43,23 +43,32 @@ struct AuthResponse {
     access_token: Secret<String>,
 }
 
+/// A record, as the result of a service-specific search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Record {
+    /// Whatever the given service uses as an id. For tidal, this is a number.
+    /// For spotify, it's a uri.
+    id: String,
+    title: String,
+    artists: Vec<String>,
+}
+
 #[allow(async_fn_in_trait)]
 pub trait Service: Sized {
     const NAME: &'static str;
     type Settings;
-    type Record: Serialize + DeserializeOwned + Clone;
 
     async fn new(data: Data<Self>) -> eyre::Result<Self>;
     async fn run(&self) -> eyre::Result<()>;
 }
-#[tracing::instrument(skip_all, fields(service = S::NAME, found = field::Empty, cache_hits = field::Empty))]
+#[tracing::instrument(skip_all, fields(service = S::NAME, found = field::Empty, cache_hits = field::Empty, filtered = field::Empty))]
 pub async fn run<S: Service>(
     cache_dir: Option<PathBuf>,
     settings: S::Settings,
     tracks: Vec<Track>,
     client: reqwest::Client,
 ) {
-    fn load_cache<S: Service>(path: Option<&Path>) -> eyre::Result<Cache<S>> {
+    fn load_cache(path: Option<&Path>) -> eyre::Result<Cache> {
         let Some(p) = path else {
             return Ok(Cache::default());
         };
@@ -67,7 +76,7 @@ pub async fn run<S: Service>(
         Ok(cache)
     }
 
-    fn save_cache<S: Service>(path: &Path, cache: &Cache<S>) -> eyre::Result<()> {
+    fn save_cache(path: &Path, cache: &Cache) -> eyre::Result<()> {
         let ser = serde_json::to_string(&cache)?;
         std::fs::create_dir_all(path.parent().unwrap())?;
         std::fs::write(path, ser)?;
@@ -79,7 +88,7 @@ pub async fn run<S: Service>(
         dir
     });
 
-    let cache: Cache<S> = match load_cache(cache_path.as_deref()) {
+    let cache: Cache = match load_cache(cache_path.as_deref()) {
         Ok(c) => {
             c.trim(&tracks);
             c
